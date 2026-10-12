@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
@@ -168,6 +168,22 @@ function VerifiedBadge() {
     />
   );
 }
+function MessageText({ body }: { body: string }) {
+  return <>{body.split(/(https?:\/\/[^\s<>]+)/g).map((part, i) => {
+    if (!/^https?:\/\//i.test(part)) return part;
+    // Render only HTTP(S); never interpret message content as HTML.
+    const end = part.match(/[.,!?;:]+$/)?.[0] ?? '';
+    const href = end ? part.slice(0, -end.length) : part;
+    return <span key={i}><a href={href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{href}</a>{end}</span>;
+  })}</>;
+}
+const publicHandle = (p: Profile) => /^[a-f0-9]{32}$/i.test(p.username)
+  ? (p.digitalx_id ? `ID ${p.digitalx_id}` : 'Na sua rede DIGITALX') : `@${p.username}`;
+const dayKey = (at: string) => new Date(at).toLocaleDateString('pt-BR');
+const readByOthers = (conversation: Conversation, message: Message, ownId: string) => {
+  const others = conversation.members.filter(member => member.user_id !== ownId);
+  return others.length > 0 && others.every(member => new Date(member.last_read_at) >= new Date(message.created_at));
+};
 const time = (date: string) =>
   new Intl.DateTimeFormat("pt-BR", {
     hour: "2-digit",
@@ -302,6 +318,7 @@ export default function Workspace({
     [messages, setMessages] = useState<Message[]>(demo ? demoMessages : []),
     [screen, setScreen] = useState<Screen>(route().screen as Screen),
     [mobileChat, setMobileChat] = useState(Boolean(route().chat)),
+    [isMobile, setIsMobile] = useState(() => matchMedia('(max-width: 760px)').matches),
     [drawer, setDrawer] = useState(false),
     [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
       try {
@@ -354,9 +371,14 @@ export default function Workspace({
     inputFile = useRef<HTMLInputElement>(null),
     statusInput = useRef<HTMLInputElement>(null),
     scroll = useRef<HTMLDivElement>(null),
+    listScroll = useRef<HTMLDivElement>(null),
+    listPosition = useRef(0),
+    layerHistory = useRef(`layer-${crypto.randomUUID()}`),
+    composerText = useRef<HTMLTextAreaElement>(null),
     request = useRef(0),
     idLookupRequest = useRef(0),
     nearBottom = useRef(true),
+    scrollOnLoad = useRef<string | null>(null),
     activeRef = useRef(activeId),
     screenRef = useRef(screen),
     mobileChatRef = useRef(mobileChat),
@@ -369,10 +391,52 @@ export default function Workspace({
     mobileChatRef.current = mobileChat;
     convsRef.current = convs;
   }, [activeId, convs, screen, mobileChat]);
+  useEffect(() => {
+    const media = matchMedia('(max-width: 760px)');
+    const change = () => setIsMobile(media.matches);
+    media.addEventListener('change', change);
+    return () => media.removeEventListener('change', change);
+  }, []);
+  useLayoutEffect(() => {
+    if (!mobileChat && listScroll.current) listScroll.current.scrollTop = listPosition.current;
+  }, [mobileChat, screen]);
+  useLayoutEffect(() => {
+    const input = composerText.current;
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+  }, [draft, mobileChat, screen]);
+  const scrollLatest = useCallback((smooth = false) => {
+    const el = scroll.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant' });
+  }, []);
+  useEffect(() => {
+    const el = scroll.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      if (nearBottom.current) scrollLatest();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [mobileChat, screen, activeId, scrollLatest, convs.length]);
   const chatVisible = () =>
     document.visibilityState === "visible" &&
     (screenRef.current === "Conversas" || screenRef.current === "Grupos") &&
     (window.matchMedia("(min-width: 761px)").matches || mobileChatRef.current);
+  useEffect(() => {
+    // Android/browser Back dismisses the current sheet/menu before leaving the chat.
+    if (isMobile && (modal || drawer || emoji)) {
+      if (!history.state?.digitalxLayer) history.pushState({ ...history.state, digitalxLayer: layerHistory.current }, '', location.href);
+    } else if (history.state?.digitalxLayer === layerHistory.current) {
+      history.back();
+    }
+  }, [isMobile, modal, drawer, emoji]);
+  useEffect(() => {
+    if (!drawer || !isMobile) return;
+    const previous = document.activeElement as HTMLElement | null;
+    document.querySelector<HTMLButtonElement>('.mobile-drawer-profile button')?.focus();
+    return () => { if (previous?.isConnected) previous.focus({preventScroll:true}); };
+  }, [drawer, isMobile]);
   useEffect(() => {
     const pop = () => {
       const r = route();
@@ -381,6 +445,7 @@ export default function Workspace({
       if (r.chat) setActiveId(r.chat);
       setDrawer(false);
       setModal(null);
+      setEmoji(false);
     };
     window.addEventListener("popstate", pop);
     return () => window.removeEventListener("popstate", pop);
@@ -553,6 +618,7 @@ export default function Workspace({
     nearBottom.current = true;
     setShowJump(false);
     if (demo) {
+      scrollOnLoad.current = activeId;
       setMessages(activeId === "demo-crew" ? demoMessages : []);
       return;
     }
@@ -562,6 +628,7 @@ export default function Workspace({
       .history(activeId)
       .then((ms) => {
         if (n === request.current) {
+          scrollOnLoad.current = activeId;
           setMessages(ms);
           setOlder(ms.length === 50);
         }
@@ -575,10 +642,17 @@ export default function Workspace({
     if (!demo && activeId && chatVisible())
       void api.markRead(activeId).then(refresh).catch(fail);
   }, [activeId, mobileChat, screen, demo, refresh, fail]);
-  useEffect(() => {
-    if (nearBottom.current)
-      bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, activeId, mobileChat]);
+  useLayoutEffect(() => {
+    // A new history can resize before its scroll event reaches React. Its first
+    // layout must reach the latest message even if that event changed nearBottom.
+    if (messages.length && scrollOnLoad.current === activeId) {
+      scrollOnLoad.current = null;
+      nearBottom.current = true;
+      setShowJump(false);
+      scrollLatest();
+    } else if (nearBottom.current)
+      scrollLatest();
+  }, [messages.length, activeId, mobileChat, scrollLatest]);
   useEffect(() => {
     if (demo) {
       setContactList(people);
@@ -625,6 +699,7 @@ export default function Workspace({
     }
   }
   function openConversation(c: Conversation) {
+    listPosition.current = listScroll.current?.scrollTop ?? listPosition.current;
     move("Conversas", demo, c.id);
     setActiveId(c.id);
     setMobileChat(true);
@@ -635,8 +710,20 @@ export default function Workspace({
     setScreen(s);
     setDrawer(false);
     setMobileChat(false);
-    setQuery("");
-    setFilter("Todos");
+    if (s !== screen) {
+      setQuery("");
+      setFilter("Todos");
+    }
+  }
+  function closeChat() {
+    const from = history.state?.digitalxFrom;
+    if (typeof from === 'string' && /\/(conversations|groups)$/.test(from)) {
+      history.back();
+    } else {
+      history.replaceState(null, '', `${demo ? '/preview' : '/app'}/conversations`);
+      setScreen('Conversas');
+      setMobileChat(false);
+    }
   }
   async function send(e: FormEvent) {
     e.preventDefault();
@@ -649,6 +736,8 @@ export default function Workspace({
     await execute(async () => {
       await api.send(target, me, draft, file);
       if (activeRef.current === target) {
+        nearBottom.current = true;
+        setShowJump(false);
         setDraft("");
         setFile(undefined);
         const history = await api.history(target);
@@ -807,7 +896,7 @@ export default function Workspace({
     <div
       className={`workspace ${mobileChat ? "chat-open" : ""} ${compact ? "compact" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
     >
-      <aside id="workspace-sidebar" className={`sidebar ${drawer ? "drawer-open" : ""}`}>
+      <aside id="workspace-sidebar" inert={isMobile ? !drawer : sidebarCollapsed} className={`sidebar ${drawer ? "drawer-open" : ""}`}>
         <button className="side-brand" onClick={() => navigate("Conversas")}>
           <img src="/brand.svg" alt="" />
           <strong>DIGITALX</strong>
@@ -816,7 +905,7 @@ export default function Workspace({
           <Avatar profile={profile} />
           <div>
             <strong>{profile.name}</strong>
-            <small>@{profile.username}</small>
+            <small>{publicHandle(profile)}</small>
           </div>
           <IconButton label="Fechar menu" onClick={() => setDrawer(false)}>
             <X size={19} />
@@ -860,6 +949,7 @@ export default function Workspace({
         />
       )}
       <section
+        inert={isMobile && drawer}
         className={`conversation-panel ${secondary ? "secondary-selected" : ""}`}
       >
         <header className="list-header">
@@ -911,6 +1001,7 @@ export default function Workspace({
             {["Todos", "Grupos", "Diretos", "Não lidas"].map((f) => (
               <button
                 className={filter === f ? "selected" : ""}
+                aria-pressed={filter === f}
                 key={f}
                 onClick={() => setFilter(f)}
               >
@@ -922,10 +1013,10 @@ export default function Workspace({
             ))}
           </div>
         </header>
-        <div className="conversation-list">
+        <div className="conversation-list" ref={listScroll} onScroll={() => { if (!mobileChat) listPosition.current = listScroll.current?.scrollTop ?? 0; }}>
           {loading ? (
-            <div className="loading-state">
-              <LoaderCircle className="spin" /> Carregando conversas…
+            <div className="conversation-skeletons" role="status" aria-label="Carregando conversas">
+              {Array.from({length: 5}, (_, i) => <div className="conversation-skeleton" key={i} aria-hidden="true"><i /><span><b /><b /></span></div>)}
             </div>
           ) : filtered.length ? (
             filtered.map((c, i) => (
@@ -952,6 +1043,7 @@ export default function Workspace({
                 <div className="conversation-copy">
                   <div>
                     <strong>{title(c, profile)}</strong>
+                    {c.is_group && !c.is_main && <Users className="conversation-group-icon" size={14} aria-label="Grupo" />}
                     {c.is_main ? <VerifiedBadge /> : demo && i === 0 && c.is_group && (
                       <CheckCircle2
                         size={12}
@@ -971,9 +1063,10 @@ export default function Workspace({
                   <time>{time(c.last?.created_at ?? c.updated_at)}</time>
                   {c.unread > 0 ? (
                     <span className="unread">{c.unread}</span>
-                  ) : (
-                    <CheckCheck size={13} />
-                  )}
+                  ) : c.last?.sender_id === me ? (
+                    readByOthers(c, c.last, me)
+                      ? <CheckCheck size={13} aria-label="Mensagem lida" /> : <Check size={13} aria-label="Mensagem enviada" />
+                  ) : null}
                 </div>
               </button>
             ))
@@ -1007,14 +1100,14 @@ export default function Workspace({
         </div>
       </section>
       {secondary ? (
-        <section className="detail-panel">
+        <section className="detail-panel" inert={isMobile && drawer}>
           <header className="detail-header">
             <IconButton
-              label="Abrir menu"
+              label="Voltar"
               className="mobile-only"
-              onClick={() => setDrawer(true)}
+              onClick={() => { if (history.state?.digitalxFrom?.startsWith(demo ? '/preview/' : '/app/')) history.back(); else navigate('Conversas'); }}
             >
-              <Menu size={21} />
+              <ArrowLeft size={21} />
             </IconButton>
             <h2>{screen}</h2>
             <span className="eyebrow">SEU ESPAÇO DIGITALX</span>
@@ -1058,7 +1151,7 @@ export default function Workspace({
                         <Avatar profile={p} index={i} />
                         <span>
                           <strong>{p.name}</strong>
-                          <small>@{p.username}</small>
+                          <small>{publicHandle(p)}</small>
                         </span>
                         <MessageCircle size={19} />
                       </button>
@@ -1096,7 +1189,7 @@ export default function Workspace({
                 <h2>
                   {profile.name} <CheckCircle2 size={18} />
                 </h2>
-                <p>@{profile.username}</p>
+                <p>{publicHandle(profile)}</p>
                 <div className="digitalx-id-card">
                   <span>ID DIGITALX</span>
                   <strong>{profile.digitalx_id ?? (demo ? "Disponível após cadastro" : "Carregando…")}</strong>
@@ -1416,17 +1509,14 @@ export default function Workspace({
           </div>
         </section>
       ) : (
-        <section className={`chat-panel ${!selection ? "no-selection" : ""}`}>
+        <section inert={isMobile && drawer} className={`chat-panel ${selection?.is_group ? 'group-chat' : 'direct-chat'} ${!selection ? "no-selection" : ""}`}>
           {selection ? (
             <>
               <header className="chat-header">
                 <IconButton
                   label="Voltar às conversas"
                   className="mobile-only"
-                  onClick={() => {
-                    move("Conversas", demo);
-                    setMobileChat(false);
-                  }}
+                  onClick={closeChat}
                 >
                   <ArrowLeft size={21} />
                 </IconButton>
@@ -1474,6 +1564,7 @@ export default function Workspace({
                   </IconButton>
                   <IconButton
                     label="Chamada de vídeo"
+                    className="video-call"
                     onClick={() => setModal("call")}
                   >
                     <Video size={21} />
@@ -1517,15 +1608,18 @@ export default function Workspace({
                   <Search size={16} />
                   <input
                     aria-label="Buscar mensagens carregadas"
+                    autoFocus
                     placeholder="Buscar nas mensagens carregadas…"
                     value={messageQuery}
                     onChange={(e) => setMessageQuery(e.target.value)}
                   />
+                  <IconButton label="Fechar busca de mensagens" onClick={() => { setChatSearch(false); setMessageQuery(''); }}><X size={19} /></IconButton>
                 </label>
               )}
               <div
                 className="message-history"
                 ref={scroll}
+                onLoadCapture={() => { if (nearBottom.current) scrollLatest(); }}
                 onScroll={() => {
                   const el = scroll.current;
                   if (el) {
@@ -1541,18 +1635,6 @@ export default function Workspace({
                     <span>PRÉVIA VISUAL · DADOS DEMONSTRATIVOS</span>
                   </div>
                 )}
-                <div className="date-separator">
-                  <span>
-                    {demo
-                      ? "HOJE"
-                      : messages[0]
-                        ? new Date(messages[0].created_at).toLocaleDateString(
-                            "pt-BR",
-                            { day: "numeric", month: "long" },
-                          )
-                        : "HOJE"}
-                  </span>
-                </div>
                 {!demo && older && messages.length > 0 && (
                   <button
                     className="older-button"
@@ -1577,20 +1659,16 @@ export default function Workspace({
                     .filter((m) =>
                       m.body.toLowerCase().includes(messageQuery.toLowerCase()),
                     )
-                    .map((m, i) => {
+                    .map((m, i, visible) => {
                       const own = m.sender_id === me,
-                        read = selection.members
-                          .filter((x) => x.user_id !== me)
-                          .every(
-                            (x) =>
-                              new Date(x.last_read_at) >=
-                              new Date(m.created_at),
-                          );
+                        previous = visible[i - 1],
+                        newDay = !previous || dayKey(previous.created_at) !== dayKey(m.created_at),
+                        grouped = !newDay && previous.sender_id === m.sender_id && new Date(m.created_at).getTime() - new Date(previous.created_at).getTime() < 300000,
+                        read = readByOthers(selection, m, me);
                       return (
-                        <div
-                          className={`message-row ${own ? "outgoing" : "incoming"}`}
-                          key={m.id}
-                        >
+                        <div className="message-entry" key={m.id}>
+                          {newDay && <div className="date-separator"><span>{new Date(m.created_at).toLocaleDateString('pt-BR', {day:'numeric',month:'long'})}</span></div>}
+                        <div className={`message-row ${own ? "outgoing" : "incoming"} ${grouped ? "consecutive" : ""}`}>
                           {!own && (
                             selection.is_group && m.sender?.id ? (
                               <button
@@ -1610,7 +1688,7 @@ export default function Workspace({
                                 {m.sender?.name ?? "Membro"}
                               </span>
                             )}
-                            <p>{m.body}</p>
+                            <p><MessageText body={m.body} /></p>
                             {m.attachments.map((a) => (
                               <FileCard
                                 key={a.id}
@@ -1630,6 +1708,7 @@ export default function Workspace({
                             </span>
                           </article>
                         </div>
+                        </div>
                       );
                     })
                 )}
@@ -1640,17 +1719,14 @@ export default function Workspace({
                   className="jump-latest"
                   onClick={() => {
                     nearBottom.current = true;
-                    bottom.current?.scrollIntoView({
-                      behavior: "smooth",
-                      block: "end",
-                    });
+                    scrollLatest(true);
                     setShowJump(false);
                   }}
                 >
                   <ArrowDown size={14} /> Mensagens recentes
                 </button>
               )}
-              <form className="composer" onSubmit={send}>
+              <form className="composer" onSubmit={send} aria-busy={busy}>
                 <input
                   type="file"
                   hidden
@@ -1689,6 +1765,7 @@ export default function Workspace({
                     </div>
                   )}
                   <textarea
+                    ref={composerText}
                     placeholder="Digite sua mensagem…"
                     aria-label="Mensagem"
                     value={draft}
@@ -1696,13 +1773,11 @@ export default function Workspace({
                     maxLength={8000}
                     onChange={(e) => {
                       setDraft(e.target.value);
-                      e.currentTarget.style.height = "auto";
-                      e.currentTarget.style.height =
-                        Math.min(e.currentTarget.scrollHeight, 100) + "px";
                     }}
                     onKeyDown={(e) => {
                       if (
                         e.key === "Enter" &&
+                        !isMobile &&
                         !e.shiftKey &&
                         !e.nativeEvent.isComposing
                       ) {
@@ -1783,7 +1858,7 @@ export default function Workspace({
           )}
         </section>
       )}
-      <nav className="mobile-bottom">
+      <nav className="mobile-bottom" aria-label="Navegação principal" inert={isMobile && drawer}>
         <button
           className={screen === "Conversas" ? "active" : ""}
           onClick={() => navigate("Conversas")}
@@ -1797,13 +1872,6 @@ export default function Workspace({
         >
           <Users size={20} />
           <span>Grupos</span>
-        </button>
-        <button
-          className="mobile-create"
-          aria-label="Nova conversa"
-          onClick={() => openNew()}
-        >
-          <Plus size={23} />
         </button>
         <button
           className={screen === "Chamadas" ? "active" : ""}
@@ -1839,7 +1907,7 @@ export default function Workspace({
       {modal && (
         <div className={`modal-overlay ${modal === "call" ? "pending-call-overlay" : ""}`} onClick={() => setModal(null)}>
           <section
-            className={modal === "call" ? "secure-call-screen pending-call-screen" : `modal ${modal === "status" ? "status-modal" : ""}`}
+            className={modal === "call" ? "secure-call-screen pending-call-screen" : `modal ${modal === "info" ? "info-modal" : ""} ${modal === "status" ? "status-modal" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label={
@@ -1999,7 +2067,7 @@ export default function Workspace({
             {modal === "info" && selection && (
               <>
                 <div className="group-info-top">
-                  <Avatar group={selection.is_group} size="large" />
+                  <Avatar group={selection.is_group} size="large" profile={!selection.is_group ? selection.members.find(member => member.user_id !== me)?.profile : undefined} />
                   <h2>
                     {title(selection, profile)}
                     {selection.is_main && <VerifiedBadge />}
@@ -2010,7 +2078,10 @@ export default function Workspace({
                   {selection.description ||
                     "Conectando ideias, pessoas e projetos."}
                 </p>
+                <button className="button-light mobile-only chat-search-action" onClick={() => { setModal(null); setChatSearch(true); }}><Search size={18} /> Buscar nesta conversa</button>
                 {selection.is_group && admin && (
+                  <details className="group-edit" open={!isMobile}>
+                  <summary><SquarePen size={17} /> Editar informações do grupo</summary>
                   <form
                     className="group-form"
                     onSubmit={(e) => {
@@ -2053,6 +2124,7 @@ export default function Workspace({
                       Salvar informações <Check size={16} />
                     </button>
                   </form>
+                  </details>
                 )}
                 <h3 className="members-heading">
                   Membros <span>{selection.members.length}</span>

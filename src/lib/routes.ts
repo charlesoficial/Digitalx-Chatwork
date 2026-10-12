@@ -20,8 +20,10 @@ export function route() {
   };
 }
 export function move(screen: string, demo: boolean, chat?: string) {
-  history.pushState(
-    null,
+  // Opening a screen from a sheet replaces its temporary history entry.
+  const method = history.state?.digitalxLayer ? 'replaceState' : 'pushState';
+  history[method](
+    { digitalxFrom: location.pathname },
     "",
     `${demo ? "/preview" : "/app"}/${chat ? "chat/" + chat : (paths[screen] ?? "conversations")}`,
   );

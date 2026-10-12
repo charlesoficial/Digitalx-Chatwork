@@ -58,7 +58,8 @@ test("login, responsive layout, navigation and honest call state", async ({
     .getByRole("button", { name: "Enviar mensagem", exact: true })
     .click();
   await expect(page.getByRole("status")).toContainText("entre com Google");
-  await page.getByRole("button", { name: "Chamada de vídeo" }).click();
+  if (mobile) await expect(page.getByRole('button', {name:'Chamada de vídeo'})).toBeHidden();
+  await page.getByRole("button", { name: mobile ? "Chamada de áudio" : "Chamada de vídeo" }).click();
   await expect(page.getByRole("dialog")).toContainText(
     "Não há uma chamada ativa.",
   );

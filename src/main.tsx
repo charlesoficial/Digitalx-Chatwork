@@ -4,26 +4,13 @@ import type { Session } from "@supabase/supabase-js";
 import { ArrowUpRight, WifiOff } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import "./style.css";
+import "./mobile.css";
+import { observeViewport } from './lib/viewport';
 import PwaUpdate from "./PwaUpdate";
 const Workspace = lazy(() => import("./Workspace"));
 const AuthenticatedApp = lazy(() => import("./ProfileOnboarding"));
 function Root() {
-  useEffect(() => {
-    const viewport = window.visualViewport;
-    const resize = () => {
-      document.documentElement.style.setProperty(
-        "--visible-height",
-        `${viewport?.height ?? window.innerHeight}px`,
-      );
-    };
-    resize();
-    viewport?.addEventListener("resize", resize);
-    window.addEventListener("resize", resize);
-    return () => {
-      viewport?.removeEventListener("resize", resize);
-      window.removeEventListener("resize", resize);
-    };
-  }, []);
+  useEffect(observeViewport, []);
   const [session, setSession] = useState<Session | null>(null),
     [loading, setLoading] = useState(true),
     [demo, setDemo] = useState(

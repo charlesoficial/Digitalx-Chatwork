@@ -2,6 +2,8 @@
 
 Plataforma WEB + PWA de comunicação em React, TypeScript, Vite, Tailwind, Lucide e Supabase. Interface própria para desktop e celular, com identidade DIGITALX e slogan **Juntos somos mais fortes**.
 
+Produção: https://digitalx-chatwork.vercel.app/
+
 ## Executar
 
 ```powershell
@@ -23,6 +25,7 @@ Abra http://localhost:5173. Preserve seu `.env.local` nas instalações já conf
 - Membros e fotos de remetentes do grupo abrem a conversa individual existente.
 - Anexos privados, upload/download e visualização; validação e autorização por RLS.
 - Perfis, contatos, configurações, status e navegação responsiva.
+- Mobile com navegação compacta, retorno preservando filtros/rolagem, chat legível e campo expansível ajustado ao VisualViewport.
 - PWA com manifest, ícones, instalação compatível, safe areas e Service Worker apenas para arquivos estáticos.
 - Chamadas individuais P2P em tela única com DTLS-SRTP e verificação bilateral; integração nativa testada com áudio sintético. Voz entre contas reais ainda requer dispositivo com microfone e validação específica.
 
@@ -41,12 +44,12 @@ Nunca incluir Client Secret do Google, service_role ou outras chaves privadas no
 ```powershell
 npm run typecheck
 npm run lint
-npm test
+npm test -- --workers=1
 ```
 
-Última suíte local em 11/10/2026: **49 aprovados / 3 skips intencionais**, build/typecheck/lint aprovados. Testes de interface usam prévia ou rede interceptada; o teste nativo de áudio usa identidades fixture e microfones sintéticos. Os três skips correspondem a essa integração não repetida em Android/iPhone/Edge.
+Última suíte local em 11/10/2026: **73 aprovados / 3 skips intencionais**, build/typecheck/lint aprovados. Testes de interface usam prévia ou rede interceptada; o teste nativo de áudio usa identidades fixture e microfones sintéticos. Os três skips correspondem a essa integração não repetida em Android/iPhone/Edge.
 
-Google, perfis, mensagens, grupos e anexos foram também validados entre duas contas reais no Edge local, separadamente. Os resultados locais não comprovam login/instalação em produção ou dispositivos físicos. Testes SQL genéricos em `supabase/tests/` usam rollback; relatórios e provas ligados às contas reais permanecem locais.
+Google, perfis, mensagens, grupos e anexos foram também validados entre duas contas reais no Edge local, separadamente. Login e mensagens em produção também foram conferidos com sessões reais. A missão mobile incluiu cinco viewports, regressões de navegação e simulação de VisualViewport; instalação e teclado em dispositivos físicos permanecem pendentes. Testes SQL genéricos em `supabase/tests/` usam rollback; relatórios e provas ligados às contas reais permanecem locais.
 
 ## Deploy
 
