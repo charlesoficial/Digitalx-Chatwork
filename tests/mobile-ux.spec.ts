@@ -22,7 +22,7 @@ async function fixture(page: Page) {
     if(path.endsWith('/list_conversations')) json=conversations;
     if(path.endsWith('/user_presence')) json=[];
     if(path.endsWith('/messages')) json=[...messages].reverse();
-    if(path.endsWith('/send_message')) {
+    if(path.endsWith('/send_message_v2')) {
       sends++;
       const data=request.postDataJSON();
       messages.push({...messages.at(-1)!,id:`sent-${sends}`,body:data.p_body,created_at:'2026-10-11T13:00:00Z',attachments:data.p_attachment?[{...data.p_attachment,id:`file-${sends}`}]:[]});
@@ -67,6 +67,8 @@ for(const [width,height] of [[360,800],[375,812],[390,844],[393,852],[430,932]])
     await expect(page).toHaveURL(new RegExp(`/chat/${chat}$`));
     await page.getByRole('button',{name:'Voltar às conversas',exact:true}).click();
     await expect(search).toHaveValue('Mobile B');
+    await expect(page.getByRole('button',{name:'Diretos',exact:true})).toHaveAttribute('aria-pressed','true');
+    await page.reload();await expect(search).toHaveValue('Mobile B');
     await expect(page.getByRole('button',{name:'Diretos',exact:true})).toHaveAttribute('aria-pressed','true');
     await page.goForward();
     await expect(page.getByRole('textbox',{name:'Mensagem',exact:true})).toBeVisible();

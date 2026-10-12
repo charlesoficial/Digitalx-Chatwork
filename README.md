@@ -20,6 +20,7 @@ Abra http://localhost:5173. Preserve seu `.env.local` nas instalações já conf
 - Login Google/Supabase com PKCE, sessão persistente e perfil automático.
 - Primeiro login em tela única para foto, nome e bio.
 - Conversas individuais/grupos, histórico, mensagens em tempo real, leituras e presença.
+- Ações de chat: pressionar e segurar, responder/deslizar, reagir, copiar, editar, apagar para mim/todos, encaminhar e selecionar mensagens. Envio com confirmação, reconciliação e tentativa novamente; imagens ampliadas.
 - Grupo principal DIGITALX • NETWORK com selo e entrada automática de novos usuários.
 - ID DIGITALX permanente: nove dígitos começando por 1, único, gerado no backend; cópia, busca exata com limites e conversa pelo ID.
 - Membros e fotos de remetentes do grupo abrem a conversa individual existente.
@@ -33,7 +34,7 @@ Abra http://localhost:5173. Preserve seu `.env.local` nas instalações já conf
 
 ## Banco e segurança
 
-Migrations organizadas em `supabase/migrations/`. O projeto Supabase existente é `mlsnyxzirlzpgkpdfmma`; as migrations 001–009 já foram aplicadas nele. **Não reaplique nesse banco.** Para outra instância vazia, revisar o conjunto antes de executar: a migration 005 referencia o grupo principal já existente no projeto original.
+Migrations organizadas em `supabase/migrations/`. O projeto Supabase existente é `mlsnyxzirlzpgkpdfmma`; as migrations 001–015 já foram aplicadas nele. **Não reaplique nesse banco.** Para outra instância vazia, revisar o conjunto antes de executar: a migration 005 referencia o grupo principal já existente no projeto original. [Regras e validação do chat](docs/CHAT-ACTIONS.md).
 
 RLS, funções autenticadas e Storage privado protegem dados e operações. ID não é credencial de login. [Detalhes do ID](docs/DIGITALX-ID.md).
 
@@ -47,7 +48,7 @@ npm run lint
 npm test -- --workers=1
 ```
 
-Última suíte local em 11/10/2026: **73 aprovados / 3 skips intencionais**, build/typecheck/lint aprovados. Testes de interface usam prévia ou rede interceptada; o teste nativo de áudio usa identidades fixture e microfones sintéticos. Os três skips correspondem a essa integração não repetida em Android/iPhone/Edge.
+Última suíte local em 11/10/2026: **109 aprovados / 3 skips intencionais**, build/typecheck/lint aprovados. Os 73 casos anteriores foram preservados, com 36 novas execuções para ações do chat. Testes de interface usam prévia ou rede interceptada; o teste nativo de áudio usa identidades fixture e microfones sintéticos. Os três skips correspondem a essa integração não repetida em Android/iPhone/Edge.
 
 Google, perfis, mensagens, grupos e anexos foram também validados entre duas contas reais no Edge local, separadamente. Login e mensagens em produção também foram conferidos com sessões reais. A missão mobile incluiu cinco viewports, regressões de navegação e simulação de VisualViewport; instalação e teclado em dispositivos físicos permanecem pendentes. Testes SQL genéricos em `supabase/tests/` usam rollback; relatórios e provas ligados às contas reais permanecem locais.
 

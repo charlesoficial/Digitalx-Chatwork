@@ -56,6 +56,7 @@ import { client, check, supabase } from "./lib/supabase";
 import * as api from "./lib/api";
 import { useAvatarUrl } from "./lib/avatar";
 import './calls.css';
+import { MessageSurface, useChatInteractions } from "./ChatInteractions";
 import type { CallRequest } from "./CallManager";
 const CallManager = lazy(() => import("./CallManager"));
 import { route, move } from "./lib/routes";
@@ -205,6 +206,28 @@ function FileCard({
   demo?: boolean;
 }) {
   const [url, setUrl] = useState(""), [downloading, setDownloading] = useState(false);
+  const [viewer, setViewer] = useState(''), [mediaFailed, setMediaFailed] = useState(false), [imageLoaded, setImageLoaded] = useState(false), [downloadNotice, setDownloadNotice] = useState('');
+  const mediaHistory = useRef(`media-${crypto.randomUUID()}`), viewerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!viewer) return;
+    const previous = document.activeElement as HTMLElement | null;
+    if (!history.state?.digitalxMedia) history.pushState({...history.state,digitalxMedia:mediaHistory.current},'',location.href);
+    const pop = () => setViewer('');
+    const key = (event:KeyboardEvent) => {
+      if(event.key==='Escape') closeViewer();
+      if(event.key==='Tab') {
+        const controls=viewerRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled),video,audio');
+        if(!controls?.length)return;
+        const first=controls[0],last=controls[controls.length-1];
+        if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+        else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+      }
+    };
+    window.addEventListener('popstate',pop); window.addEventListener('keydown',key);
+    return () => { window.removeEventListener('popstate',pop); window.removeEventListener('keydown',key); if(previous?.isConnected)previous.focus({preventScroll:true}); };
+  },[viewer]);
+  function closeViewer(){setViewer('');if(history.state?.digitalxMedia===mediaHistory.current)history.back();}
+
   useEffect(() => {
     let alive = true;
     if (!demo && file.mime_type.startsWith("image/"))
@@ -213,7 +236,7 @@ function FileCard({
         .then((u) => {
           if (alive) setUrl(u);
         })
-        .catch(onError);
+        .catch(() => setMediaFailed(true));
     return () => {
       alive = false;
     };
@@ -223,6 +246,10 @@ function FileCard({
       onError(
         "Anexo demonstrativo. Entre com Google para acessar arquivos reais.",
       );
+      return;
+    }
+    if (/^(image|video|audio)\//.test(file.mime_type)) {
+      try { setViewer(await api.signedFile(file.path)); } catch(e) { onError(e); }
       return;
     }
     const popup = window.open("", "_blank");
@@ -241,7 +268,7 @@ function FileCard({
       onError("Anexo demonstrativo. Entre com Google para acessar arquivos reais.");
       return;
     }
-    setDownloading(true);
+    setDownloading(true); setDownloadNotice("");
     try {
       const blob = await api.downloadFile(file.path);
       const objectUrl = URL.createObjectURL(blob);
@@ -251,6 +278,7 @@ function FileCard({
       document.body.appendChild(link);
       link.click();
       link.remove();
+      setDownloadNotice("Download solicitado ao navegador.");
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
     } catch (e) {
       onError(e);
@@ -260,16 +288,15 @@ function FileCard({
   }
   return (
     <div className="file-card">
-      {url && (
-        <a href={url} target="_blank" rel="noreferrer">
-          <img
-            className="attachment-image"
-            src={url}
-            alt={file.name}
-            loading="lazy"
-          />
-        </a>
-      )}
+      {url && !mediaFailed && <button className={`attachment-thumbnail ${imageLoaded?'loaded':''}`} aria-label={`Ampliar ${file.name}`} onClick={()=>void open()}>
+        <img className="attachment-image" src={url} alt={file.name} loading="lazy" referrerPolicy="no-referrer" onLoad={()=>setImageLoaded(true)} onError={()=>setMediaFailed(true)}/>
+      </button>}
+      {mediaFailed && <div className="media-error">Não foi possível carregar a imagem. <button onClick={()=>{setMediaFailed(false);setImageLoaded(false);void api.signedFile(file.path).then(setUrl).catch(()=>setMediaFailed(true));}}>Carregar novamente</button></div>}
+      {viewer && <div className="media-viewer" ref={viewerRef} role="dialog" aria-modal="true" aria-label={`Visualizar ${file.name}`} onClick={closeViewer}>
+        <header><strong>{file.name}</strong><button aria-label="Fechar mídia" autoFocus onClick={e=>{e.stopPropagation();closeViewer();}}><X size={23}/></button></header>
+        <div onClick={e=>e.stopPropagation()}>{file.mime_type.startsWith('image/')?<img src={viewer} alt={file.name} referrerPolicy="no-referrer"/>:file.mime_type.startsWith('video/')?<video src={viewer} controls playsInline/>:<audio src={viewer} controls/>}</div>
+        <button className="media-download" disabled={downloading} onClick={e=>{e.stopPropagation();void download();}}><Download size={19}/>Baixar arquivo</button>
+      </div>}
       <button onClick={download} disabled={downloading} aria-label={`Baixar ${file.name}`}>
         <span className="file-icon">
           <FileText size={23} />
@@ -283,6 +310,8 @@ function FileCard({
         </span>
         {downloading ? <LoaderCircle size={17} className="spin" /> : <Download size={17} />}
       </button>
+      {downloading && <small className="download-progress" role="status">Preparando arquivo…</small>}
+      {downloadNotice && <small className="download-progress" role="status">{downloadNotice}</small>}
       <button className="file-preview" onClick={open} aria-label={`Visualizar ${file.name}`}>
         <ArrowUpRight size={14} /> Visualizar
       </button>
@@ -300,6 +329,8 @@ export default function Workspace({
   onExit: () => void;
   initialProfile?: Profile;
 }) {
+  const savedList = history.state?.digitalxList;
+  const restoredList = savedList?.user === (session?.user.id ?? demoProfile.id) ? savedList : null;
   const [profile, setProfile] = useState<Profile>(
       initialProfile ?? (demo
         ? demoProfile
@@ -327,12 +358,12 @@ export default function Workspace({
         return false;
       }
     }),
-    [query, setQuery] = useState(""),
+    [query, setQuery] = useState<string>(typeof restoredList?.query === 'string' ? restoredList.query : ''),
     [idSearch, setIdSearch] = useState(""),
     [idResult, setIdResult] = useState<Profile | null>(null),
     [idNotice, setIdNotice] = useState(""),
     [idSearching, setIdSearching] = useState(false),
-    [filter, setFilter] = useState("Todos"),
+    [filter, setFilter] = useState<string>(['Todos','Grupos','Diretos','Não lidas'].includes(restoredList?.filter) ? restoredList.filter : 'Todos'),
     [draft, setDraft] = useState(""),
     [file, setFile] = useState<File | undefined>(),
     [busy, setBusy] = useState(false),
@@ -367,12 +398,22 @@ export default function Workspace({
     [compact, setCompact] = useState(
       localStorage.getItem("digitalx-compact") === "true",
     );
+  type PendingSend = { nonce: string; conversation: string; body: string; file?: File; reply?: string | null; state: "sending" | "failed"; problem?: string };
+  const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
+  const [filePreview, setFilePreview] = useState('');
+  useEffect(() => {
+    if (!file?.type.startsWith('image/')) { setFilePreview(''); return; }
+    const url=URL.createObjectURL(file); setFilePreview(url);
+    return () => URL.revokeObjectURL(url);
+  },[file]);
+  const sendLocks = useRef(new Set<string>());
+  const messagesRef = useRef(messages);
   const bottom = useRef<HTMLDivElement>(null),
     inputFile = useRef<HTMLInputElement>(null),
     statusInput = useRef<HTMLInputElement>(null),
     scroll = useRef<HTMLDivElement>(null),
     listScroll = useRef<HTMLDivElement>(null),
-    listPosition = useRef(0),
+    listPosition = useRef<number>(Number.isFinite(restoredList?.position) ? restoredList.position : 0),
     layerHistory = useRef(`layer-${crypto.randomUUID()}`),
     composerText = useRef<HTMLTextAreaElement>(null),
     request = useRef(0),
@@ -386,11 +427,12 @@ export default function Workspace({
     selection = convs.find((c) => c.id === activeId),
     me = profile.id;
   useEffect(() => {
+    messagesRef.current = messages;
     activeRef.current = activeId;
     screenRef.current = screen;
     mobileChatRef.current = mobileChat;
     convsRef.current = convs;
-  }, [activeId, convs, screen, mobileChat]);
+  }, [activeId, convs, screen, mobileChat, messages]);
   useEffect(() => {
     const media = matchMedia('(max-width: 760px)');
     const change = () => setIsMobile(media.matches);
@@ -424,14 +466,6 @@ export default function Workspace({
     (screenRef.current === "Conversas" || screenRef.current === "Grupos") &&
     (window.matchMedia("(min-width: 761px)").matches || mobileChatRef.current);
   useEffect(() => {
-    // Android/browser Back dismisses the current sheet/menu before leaving the chat.
-    if (isMobile && (modal || drawer || emoji)) {
-      if (!history.state?.digitalxLayer) history.pushState({ ...history.state, digitalxLayer: layerHistory.current }, '', location.href);
-    } else if (history.state?.digitalxLayer === layerHistory.current) {
-      history.back();
-    }
-  }, [isMobile, modal, drawer, emoji]);
-  useEffect(() => {
     if (!drawer || !isMobile) return;
     const previous = document.activeElement as HTMLElement | null;
     document.querySelector<HTMLButtonElement>('.mobile-drawer-profile button')?.focus();
@@ -440,6 +474,12 @@ export default function Workspace({
   useEffect(() => {
     const pop = () => {
       const r = route();
+      const saved = history.state?.digitalxList;
+      if (!r.chat && saved?.user === me) {
+        setQuery(typeof saved.query === 'string' ? saved.query : '');
+        setFilter(['Todos','Grupos','Diretos','Não lidas'].includes(saved.filter) ? saved.filter : 'Todos');
+        listPosition.current = Number.isFinite(saved.position) ? saved.position : 0;
+      }
       setScreen(r.screen as Screen);
       setMobileChat(Boolean(r.chat));
       if (r.chat) setActiveId(r.chat);
@@ -488,10 +528,12 @@ export default function Workspace({
     if (demo || !target || !navigator.onLine) return;
     const generation = request.current;
     try {
-      const latest = await api.history(target);
+      const [latest, known] = await Promise.all([api.history(target), api.messagesByIds(messagesRef.current.filter(m => m.conversation_id === target).map(m => m.id))]);
       if (target !== activeRef.current || generation !== request.current) return;
-      setMessages((previous) => {
-        const unique = new Map(previous.map((message) => [message.id, message]));
+      const confirmed = new Set([...latest, ...known].map(m => m.client_nonce).filter(Boolean));
+      setPendingSends(previous => previous.filter(p => !confirmed.has(p.nonce)));
+      setMessages(() => {
+        const unique = new Map(known.filter(m => m.conversation_id === target).map((message) => [message.id, message]));
         latest.forEach((message) => unique.set(message.id, message));
         return [...unique.values()].sort((a, b) =>
           a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
@@ -505,6 +547,32 @@ export default function Workspace({
       fail(e);
     }
   }, [demo, refresh, fail]);
+  const interactions = useChatInteractions({me: profile, demo, conversation: activeId, conversations: convs, onSync: async () => { await syncMessages(); await refresh(); }, onNotify: notify, onError: fail, onLocate: locateMessage});
+  useEffect(() => { if (interactions.reply) composerText.current?.focus({preventScroll:true}); }, [interactions.reply]);
+  async function locateMessage(id: string) {
+    let original = messagesRef.current.find(m => m.id === id);
+    if (!original && !demo) {
+      original = (await api.messagesByIds([id]))[0];
+      if (original?.conversation_id === activeRef.current) setMessages(old => [...old.filter(m => m.id !== id), original!].sort((a,b)=>a.created_at.localeCompare(b.created_at)||a.id.localeCompare(b.id)));
+    }
+    if (!original || original.deleted_at || original.conversation_id !== activeRef.current) throw new Error('Mensagem original indisponível.');
+    nearBottom.current = false;
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`message-${id}`), container = scroll.current;
+      if (el && container) {
+        container.scrollTo({top:container.scrollTop + el.getBoundingClientRect().top - container.getBoundingClientRect().top - 40, behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+        el.classList.add('message-highlight'); setTimeout(()=>el.classList.remove('message-highlight'),1800);
+      }
+    });
+  }
+  useEffect(() => {
+    // Android/browser Back dismisses the current sheet/menu before leaving the chat.
+    if (isMobile && (modal || drawer || emoji || interactions.overlay || interactions.selectionActive)) {
+      if (!history.state?.digitalxLayer) history.pushState({ ...history.state, digitalxLayer: layerHistory.current }, '', location.href);
+    } else if (history.state?.digitalxLayer === layerHistory.current) {
+      history.back();
+    }
+  }, [isMobile, modal, drawer, emoji, interactions.overlay, interactions.selectionActive]);
   useEffect(() => {
     if (demo) return;
     api.getProfile(me).then(setProfile).catch(fail);
@@ -546,6 +614,10 @@ export default function Workspace({
           }
         },
       )
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages" }, () => { void syncMessages(); void refresh(); })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "message_reactions" }, () => void syncMessages())
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "message_reactions" }, () => void syncMessages())
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "message_hidden" }, () => { void syncMessages(); void refresh(); })
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "conversations" },
@@ -700,6 +772,7 @@ export default function Workspace({
   }
   function openConversation(c: Conversation) {
     listPosition.current = listScroll.current?.scrollTop ?? listPosition.current;
+    if (!route().chat) history.replaceState({...history.state,digitalxList:{user:me,query,filter,position:listPosition.current}},'',location.href);
     move("Conversas", demo, c.id);
     setActiveId(c.id);
     setMobileChat(true);
@@ -725,27 +798,35 @@ export default function Workspace({
       setMobileChat(false);
     }
   }
+  async function transmit(item: PendingSend) {
+    if (sendLocks.current.has(item.nonce)) return;
+    sendLocks.current.add(item.nonce);
+    setPendingSends(old => old.map(p => p.nonce === item.nonce ? {...p, state:'sending', problem:undefined} : p));
+    try {
+      await api.send(item.conversation, me, item.body, item.file, item.reply, item.nonce);
+      if (activeRef.current === item.conversation) {
+        const latest = await api.history(item.conversation);
+        setMessages(old => {
+          const map = new Map(old.map(m=>[m.id,m])); latest.forEach(m=>map.set(m.id,m));
+          return [...map.values()].sort((a,b)=>a.created_at.localeCompare(b.created_at)||a.id.localeCompare(b.id));
+        });
+      }
+      setPendingSends(old => old.filter(p => p.nonce !== item.nonce));
+      await refresh();
+    } catch(e) {
+      const problem = e instanceof Error ? e.message : 'Falha no envio. Tente novamente.';
+      setPendingSends(old => old.map(p => p.nonce === item.nonce ? {...p,state:'failed',problem} : p));
+    } finally { sendLocks.current.delete(item.nonce); }
+  }
   async function send(e: FormEvent) {
     e.preventDefault();
     if ((!draft.trim() && !file) || busy) return;
-    if (demo) {
-      notify("Prévia visual: entre com Google para enviar mensagens reais.");
-      return;
-    }
-    const target = activeId!;
-    await execute(async () => {
-      await api.send(target, me, draft, file);
-      if (activeRef.current === target) {
-        nearBottom.current = true;
-        setShowJump(false);
-        setDraft("");
-        setFile(undefined);
-        const history = await api.history(target);
-        if (activeRef.current === target) setMessages(history);
-        await api.markRead(target);
-      }
-      await refresh();
-    });
+    if (demo) { notify('Prévia visual: entre com Google para enviar mensagens reais.'); return; }
+    const item: PendingSend = {nonce:crypto.randomUUID(),conversation:activeId!,body:draft.trim(),file,reply:interactions.reply?.id,state:'sending'};
+    nearBottom.current = true; setShowJump(false);
+    setPendingSends(old=>[...old,item]); setDraft(''); setFile(undefined); interactions.setReply(null);
+    requestAnimationFrame(()=>scrollLatest());
+    await transmit(item);
   }
   async function newConversation() {
     if (demo) {
@@ -1616,6 +1697,7 @@ export default function Workspace({
                   <IconButton label="Fechar busca de mensagens" onClick={() => { setChatSearch(false); setMessageQuery(''); }}><X size={19} /></IconButton>
                 </label>
               )}
+              {interactions.selectionBar}
               <div
                 className="message-history"
                 ref={scroll}
@@ -1666,7 +1748,7 @@ export default function Workspace({
                         grouped = !newDay && previous.sender_id === m.sender_id && new Date(m.created_at).getTime() - new Date(previous.created_at).getTime() < 300000,
                         read = readByOthers(selection, m, me);
                       return (
-                        <div className="message-entry" key={m.id}>
+                        <div className="message-entry" id={`message-${m.id}`} key={m.id}>
                           {newDay && <div className="date-separator"><span>{new Date(m.created_at).toLocaleDateString('pt-BR', {day:'numeric',month:'long'})}</span></div>}
                         <div className={`message-row ${own ? "outgoing" : "incoming"} ${grouped ? "consecutive" : ""}`}>
                           {!own && (
@@ -1682,14 +1764,16 @@ export default function Workspace({
                               </button>
                             ) : <Avatar profile={m.sender} size="small" index={i} />
                           )}
-                          <article className="message-bubble">
+                          <MessageSurface message={m} onMenu={interactions.open} onReply={interactions.respond} onSelect={interactions.toggle} selecting={interactions.selectionActive} selected={interactions.selected.some(x=>x.id===m.id)}>
                             {!own && (
                               <span className="message-author">
                                 {m.sender?.name ?? "Membro"}
                               </span>
                             )}
-                            <p><MessageText body={m.body} /></p>
-                            {m.attachments.map((a) => (
+                            {m.forwarded && !m.deleted_at && <span className="message-forwarded"><ArrowUpRight size={12}/> Encaminhada</span>}
+                            {!m.deleted_at && interactions.quote(m)}
+                            <p className={m.deleted_at ? "message-deleted" : ""}><MessageText body={m.deleted_at ? "Esta mensagem foi apagada" : m.body} /></p>
+                            {(m.deleted_at ? [] : m.attachments).map((a) => (
                               <FileCard
                                 key={a.id}
                                 file={a}
@@ -1698,20 +1782,25 @@ export default function Workspace({
                               />
                             ))}
                             <span className="message-time">
-                              {time(m.created_at)}
+                              {m.edited_at && !m.deleted_at && <span>Editada · </span>}{time(m.created_at)}
                               {own &&
                                 (read ? (
-                                  <CheckCheck size={12} />
+                                  <CheckCheck size={12} aria-label="Mensagem lida" />
                                 ) : (
-                                  <Check size={12} />
+                                  <Check size={12} aria-label="Mensagem enviada" />
                                 ))}
                             </span>
-                          </article>
+                            {interactions.reactions(m)}
+                          </MessageSurface>
                         </div>
                         </div>
                       );
                     })
                 )}
+                {pendingSends.filter(p=>p.conversation===activeId && !messages.some(m=>m.client_nonce===p.nonce)).map(p=><div className="pending-message" role="status" key={p.nonce}>
+                  <p>{p.body || p.file?.name}</p><small>{p.state==='sending'?<><LoaderCircle size={12} className="spin"/>Enviando…</>:'Falha no envio'}</small>
+                  {p.state==='failed'&&<><small>{p.problem}</small><button onClick={()=>void transmit(p)}>Tentar novamente</button></>}
+                </div>)}
                 <div ref={bottom} />
               </div>
               {showJump && (
@@ -1751,9 +1840,10 @@ export default function Workspace({
                   <Plus size={21} />
                 </IconButton>
                 <div className="composer-input">
+                  {interactions.replyPreview}
                   {file && (
                     <div className="selected-file">
-                      <Paperclip size={14} />
+                      {filePreview ? <img className="selected-image" src={filePreview} alt="Prévia do anexo"/> : <Paperclip size={14} />}
                       {file.name}
                       <button
                         type="button"
@@ -1904,6 +1994,7 @@ export default function Workspace({
           {toast}
         </div>
       )}
+      {interactions.ui}
       {modal && (
         <div className={`modal-overlay ${modal === "call" ? "pending-call-overlay" : ""}`} onClick={() => setModal(null)}>
           <section

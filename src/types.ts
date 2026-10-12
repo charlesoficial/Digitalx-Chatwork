@@ -40,6 +40,13 @@ export type Message = {
   created_at: string;
   sender: Profile;
   attachments: Attachment[];
+  reply_to_id?: string | null;
+  reply?: Pick<Message, "id" | "body" | "sender" | "deleted_at"> | null;
+  reactions?: { user_id: string; emoji: string | null }[];
+  edited_at?: string | null;
+  deleted_at?: string | null;
+  forwarded?: boolean;
+  client_nonce?: string | null;
 };
 export type Status = {
   id: string;

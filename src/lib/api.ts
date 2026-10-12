@@ -82,10 +82,19 @@ export async function conversations(_userId: string): Promise<Conversation[]> {
   check(error);
   return data as Conversation[];
 }
+const messageFields = `*,sender:profiles!messages_sender_id_fkey(${profileFields}),attachments(*),reply:replied_message(id,body,deleted_at,sender:profiles!messages_sender_id_fkey(${profileFields})),reactions:message_reactions(user_id,emoji)`;
+export async function messagesByIds(ids: string[]): Promise<Message[]> {
+  const rows: Message[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const { data, error } = await client().from("messages").select(messageFields).in("id", ids.slice(i, i + 50));
+    check(error); rows.push(...data as unknown as Message[]);
+  }
+  return rows;
+}
 export async function history(id: string, before?: string): Promise<Message[]> {
   let q = client()
     .from("messages")
-    .select(`*,sender:profiles(${profileFields}),attachments(*)`)
+    .select(messageFields)
     .eq("conversation_id", id)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
@@ -123,14 +132,17 @@ export function validateFile(file: File) {
     );
   if (!file.size) throw new Error("Este arquivo está vazio.");
 }
+const uploadRetries = new Map<string, Omit<Attachment, "id">>();
 export async function send(
   id: string,
   user: string,
   body: string,
   file?: File,
+  reply?: string | null,
+  nonce: string = crypto.randomUUID(),
 ) {
-  let attachment: Omit<Attachment, "id"> | undefined;
-  if (file) {
+  let attachment = uploadRetries.get(nonce);
+  if (file && !attachment) {
     validateFile(file);
     const path = `${id}/${user}/${crypto.randomUUID()}`;
     const { error } = await client()
@@ -143,16 +155,26 @@ export async function send(
       mime_type: file.type,
       size: file.size,
     };
+    uploadRetries.set(nonce, attachment);
   }
-  const { error } = await client().rpc("send_message", {
+  const { data, error } = await client().rpc("send_message_v2", {
     p_conversation: id,
     p_body: body.trim(),
     p_attachment: attachment ?? null,
+    p_reply: reply ?? null,
+    p_nonce: nonce,
   });
-  if (error && attachment)
-    await client().storage.from("chat-files").remove([attachment.path]);
+  // A response can be lost after commit. Keep the same upload/nonce for retry;
+  // deleting here would discard an upload before persistence is known.
   check(error);
+  uploadRetries.delete(nonce);
+  return data as string | null;
 }
+export async function editMessage(id: string, body: string) { const { error } = await client().rpc("edit_message", { p_message: id, p_body: body.trim() }); check(error); }
+export async function hideMessages(ids: string[]) { const { error } = await client().rpc("hide_messages", { p_messages: ids }); check(error); }
+export async function deleteForAll(id: string) { const { error } = await client().rpc("delete_message_for_all", { p_message: id }); check(error); }
+export async function reactMessage(id: string, emoji: string | null) { const { error } = await client().rpc("react_message", { p_message: id, p_emoji: emoji }); check(error); }
+export async function forwardMessages(ids: string[], conversation: string, nonce: string) { const { data, error } = await client().rpc("forward_messages", { p_messages: ids, p_conversation: conversation, p_nonce: nonce }); check(error); return data as string[]; }
 export async function signedFile(path: string, bucket = "chat-files") {
   const { data, error } = await client()
     .storage.from(bucket)
