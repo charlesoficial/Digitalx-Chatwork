@@ -1,0 +1,6 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: microphone=(self), camera=(), display-capture=()
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.googleusercontent.com https://mlsnyxzirlzpgkpdfmma.supabase.co; connect-src 'self' https://mlsnyxzirlzpgkpdfmma.supabase.co wss://mlsnyxzirlzpgkpdfmma.supabase.co; media-src 'self' blob: https://mlsnyxzirlzpgkpdfmma.supabase.co; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'

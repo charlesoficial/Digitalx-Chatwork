@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*
+!.env.example
+.vercel/
+*.tsbuildinfo
+evidence/
+# Local reports and helpers contain real account identifiers and private captures.
+docs/GOOGLE-OAUTH.md
+docs/LIVE-VALIDATION.md
+scripts/live-validation.mjs
+scripts/check-live-files.mjs
+supabase/tests/live-*.sql
+supabase/tests/*-state.sql
+supabase/tests/secure-audio.sql
+test-results/
+playwright-report/
